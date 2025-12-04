@@ -1,6 +1,7 @@
 import requests
 import json
-from utils.data_transformer import canva_courses_with_grade, canvas_course_assignments, canvas_course_modules_and_files
+from src.utils.data_transformer import canva_courses_with_grade, canvas_course_assignments, canvas_course_modules_and_files
+from concurrent.futures import ThreadPoolExecutor
 
 
 class CanvasLMSAPI:
@@ -12,6 +13,7 @@ class CanvasLMSAPI:
 
 
     def __init_course(self):
+        """Initializes the list of courses. Handles errors gracefully."""
         path = "courses"
         params = {
             "enrollment_state": "active",
@@ -19,9 +21,14 @@ class CanvasLMSAPI:
             "per_page": 10
         }
         courses = self.__canvas_api_request(path, params_additions=params, reason="init")
+
+        if not courses:
+            print("⚠️  WARNING: No courses found or API request failed.")
+            print("Check your CANVAS_BASE_URL and API_TOKEN in .env")
+            return
+
         for course in courses:
             self.courses.append({"name": course["name"], "id": course["id"], "course_code": course["course_code"]})
-        # print(self.courses)
 
 
     def __canvas_api_request(self, url_path, params_additions=0, reason="data"):
@@ -36,8 +43,8 @@ class CanvasLMSAPI:
             params.update(params_additions)
         full_path = f'{self.base_url}/{url_path}'
         try:
-            if reason != "init":
-                print(f"Fetching {reason} from Canvas...")
+            # if reason != "init":
+            #     print(f"Fetching {reason} from Canvas...")
             response = requests.get(full_path, headers=headers, params=params)
             # Check if request was successful
             if response.status_code == 200:
@@ -63,10 +70,13 @@ class CanvasLMSAPI:
             "include": ["term", "total_scores"],
             "per_page": 10
         }
-        courses = self.__canvas_api_request(path, params_additions=params, reason=path)
+        courses = self.__canvas_api_request(path, params_additions=params, reason="courses")
+        if not courses: return [] # Return empty list if failed
+
         for course in courses:
-            # if course["id"] not in self.courses and course["name"] not in self.courses:
-            self.courses.append({"name": course["name"], "id": course["id"]})
+            # Avoid duplicates if logic runs multiple times
+            if not any(c['id'] == course['id'] for c in self.courses):
+                self.courses.append({"name": course["name"], "id": course["id"]})
         return courses
 
 
@@ -105,17 +115,27 @@ class CanvasLMSAPI:
 
 
     def all_assignments(self):
-        all_assignments = []
-        for course in self.courses:
-            cleaned_assignments = canvas_course_assignments(self.__get_course_assignments(course["id"]), course["name"])
-            all_assignments.append(cleaned_assignments)
-        return all_assignments
+        def fetch_for_course(course):
+            raw_data = self.__get_course_assignments(course["id"])
+            if raw_data is None:
+                return {"course_name": course["name"], "assignments": []}
+            return canvas_course_assignments(raw_data, course["name"])
+
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(fetch_for_course, self.courses))
+
+        return results
 
 
     def all_files(self):
-        all_files = []
-        for course in self.courses:
-            cleaned_files = canvas_course_modules_and_files(self.__get_course_files(course["id"]), course["name"])
-            all_files.append(cleaned_files)
-        return all_files
+        def fetch_for_course(course):
+            raw_data = self.__get_course_files(course["id"])
+            if raw_data is None:
+                return {course["name"]: []}
+            return canvas_course_modules_and_files(raw_data, course["name"])
+
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(fetch_for_course, self.courses))
+
+        return results
 
