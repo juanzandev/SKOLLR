@@ -3,8 +3,9 @@
 SKOLLR - Canvas LMS Widget Application
 """
 
-import sys, os
-import concurrent
+import sys
+import os
+import concurrent.futures
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -18,21 +19,55 @@ from src.ui.analysis import AnalysisPage
 from src.ui.course_details import CourseDetailPage
 from src.ui.graphs import GraphsPage
 from src.ui.settings import SettingsPage
+from src.ui.api_key_dialog import ApiKeyDialog
 from src.api.canvas_api import CanvasLMSAPI
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def save_api_key_to_env(key_name: str, key_value: str):
+    """Save API key to .env file automatically"""
+    env_path = Path(__file__).parent / ".env"
+
+    # Read existing content
+    content = ""
+    if env_path.exists():
+        with open(env_path, "r") as f:
+            content = f.read()
+
+    # Check if key already exists
+    lines = content.split("\n") if content else []
+    found = False
+
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key_name}="):
+            lines[i] = f"{key_name}={key_value}"
+            found = True
+            break
+
+    if not found:
+        lines.append(f"{key_name}={key_value}")
+
+    # Write back
+    with open(env_path, "w") as f:
+        f.write("\n".join(lines))
+
+    # Update os.environ
+    os.environ[key_name] = key_value
+
+
 class SkollrWidget(QMainWindow):
     """Compact desktop widget for Canvas LMS"""
 
-    def __init__(self, courses, files, assignments):
+    def __init__(self, courses, files, assignments, canvas_api=None):
         super().__init__()
         self.dragging = False
         self.drag_position = QPoint()
 
         self.assignments = assignments
         self.files = files
+        self.canvas_api = canvas_api
 
         # Assets (located under src/img)
         base_dir = Path(__file__).parent
@@ -99,9 +134,11 @@ class SkollrWidget(QMainWindow):
         self.dashboard_stack = QStackedWidget()
 
         # Page 1: The Course List
-        self.dashboard_list = DashboardPage(courses)
+        self.dashboard_list = DashboardPage(courses, canvas_api)
         # Connect the signal from DashboardPage to our handler
         self.dashboard_list.course_selected.connect(self.show_course_detail)
+        self.dashboard_list.setup_canvas_api.connect(
+            self.show_canvas_api_dialog)
 
         self.dashboard_stack.addWidget(self.dashboard_list)
 
@@ -121,14 +158,14 @@ class SkollrWidget(QMainWindow):
         # Apply initial sizing for the background logo
         self._update_background_logo_size()
 
-
     def show_course_detail(self, course_data):
         """Switches the Dashboard tab to show course details"""
         course_name = course_data.get("course_name")
 
         # 1. Filter Assignments for this course
         # Matches structure from previous canvas_api responses
-        c_assigns = next((a["assignments"] for a in self.assignments if a.get("course_name") == course_name), [])
+        c_assigns = next((a["assignments"] for a in self.assignments if a.get(
+            "course_name") == course_name), [])
 
         # 2. Filter Files for this course
         c_files = []
@@ -152,6 +189,34 @@ class SkollrWidget(QMainWindow):
             self.dashboard_stack.removeWidget(current)
             current.deleteLater()
             self.dashboard_stack.setCurrentWidget(self.dashboard_list)
+
+    def show_canvas_api_dialog(self):
+        """Show dialog to input Canvas API key and Base URL"""
+        dialog = ApiKeyDialog(
+            self,
+            api_name="Canvas LMS",
+            prompt_text="Enter your Canvas LMS API token and institution URL.\nYou can find the API token in Canvas > Account > Settings.",
+            fields=[
+                ("canvas_base_url", False,
+                 "Canvas Base URL (e.g., https://canvas.instructure.com):"),
+                ("canvas_api_token", True, "Canvas API Token:")
+            ]
+        )
+        if dialog.exec() == 1:  # QDialog.Accepted == 1
+            values = dialog.get_values()
+            if values.get("canvas_api_token") and values.get("canvas_base_url"):
+                # Save to .env automatically
+                save_api_key_to_env("CANVAS_API_TOKEN",
+                                    values["canvas_api_token"])
+                save_api_key_to_env("CANVAS_BASE_URL",
+                                    values["canvas_base_url"])
+                # Reload the app
+                self.close()
+                load_dotenv()
+                # Restart the app logic
+                import subprocess
+                subprocess.Popen([sys.executable, __file__])
+                QApplication.quit()
 
     def _create_title_bar(self) -> QWidget:
         """Create custom draggable title bar with minimize/close buttons"""
@@ -265,17 +330,35 @@ class SkollrWidget(QMainWindow):
 
 
 if __name__ == "__main__":
-    api_token = os.environ.get("CANVAS_API_TOKEN")
-    api_base_url = f'{os.getenv("CANVAS_BASE_URL")}/api/v1'
-    canvas_api = CanvasLMSAPI(api_token=api_token, base_url=api_base_url)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_courses = executor.submit(canvas_api.all_courses_and_grades)
-        future_assignments = executor.submit(canvas_api.all_assignments)
-        future_files = executor.submit(canvas_api.all_files)
-        courses = future_courses.result()
-        assignments = future_assignments.result()
-        files = future_files.result()
     app = QApplication(sys.argv)
-    widget = SkollrWidget(courses=courses, files=files, assignments=assignments)
+
+    api_token = os.environ.get("CANVAS_API_TOKEN")
+    api_base_url = f'{os.getenv("CANVAS_BASE_URL", "")}/api/v1'
+
+    courses = []
+    assignments = []
+    files = []
+    canvas_api = None
+
+    if api_token and api_token.strip():
+        try:
+            canvas_api = CanvasLMSAPI(
+                api_token=api_token, base_url=api_base_url)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_courses = executor.submit(
+                    canvas_api.all_courses_and_grades)
+                future_assignments = executor.submit(
+                    canvas_api.all_assignments)
+                future_files = executor.submit(canvas_api.all_files)
+                courses = future_courses.result()
+                assignments = future_assignments.result()
+                files = future_files.result()
+        except Exception as e:
+            print(f"Error loading Canvas data: {e}")
+            canvas_api = CanvasLMSAPI(
+                api_token=api_token, base_url=api_base_url)
+
+    widget = SkollrWidget(courses=courses, files=files,
+                          assignments=assignments, canvas_api=canvas_api)
     widget.show()
     sys.exit(app.exec())
