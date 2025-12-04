@@ -6,6 +6,8 @@ shiboken6==6.9.2
 
 # HTTP requests for Canvas API
 requests>=2.31.0
+google-generativeai
+
 
 # Data persistence and encryption
 cryptography>=41.0.0
