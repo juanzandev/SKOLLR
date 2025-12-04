@@ -1,0 +1,23 @@
+# Core GUI framework
+PySide6==6.9.2
+PySide6_Addons==6.9.2
+PySide6_Essentials==6.9.2
+shiboken6==6.9.2
+
+# HTTP requests for Canvas API
+requests>=2.31.0
+
+# Data persistence and encryption
+cryptography>=41.0.0
+sqlalchemy>=2.0.0
+
+# Visualization and graphing
+matplotlib>=3.8.0
+plotly>=5.17.0
+
+# AI/ML (for tips generation)
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# Build executable
+pyinstaller>=6.0.0
