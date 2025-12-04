@@ -6,10 +6,12 @@ SKOLLR - Canvas LMS Widget Application
 import sys
 import os
 import concurrent.futures
+import requests
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QTabWidget, QStackedLayout, QGraphicsOpacityEffect, QStackedWidget
+    QPushButton, QLabel, QTabWidget, QStackedLayout, QGraphicsOpacityEffect, QStackedWidget,
+    QMessageBox
 )
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QFont, QMouseEvent, QIcon, QPixmap
@@ -55,6 +57,32 @@ def save_api_key_to_env(key_name: str, key_value: str):
 
     # Update os.environ
     os.environ[key_name] = key_value
+
+
+def validate_canvas_credentials(base_url: str, api_token: str):
+    """Return (ok, error_message) after attempting a lightweight Canvas call."""
+    base_url = (base_url or "").strip()
+    api_token = (api_token or "").strip()
+    if not base_url or not api_token:
+        return False, "Base URL and API token are required."
+
+    # Ensure scheme
+    if not base_url.startswith("http://") and not base_url.startswith("https://"):
+        base_url = "https://" + base_url
+
+    test_url = base_url.rstrip("/") + "/api/v1/courses"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    params = {"per_page": 1}
+    try:
+        resp = requests.get(test_url, headers=headers, params=params, timeout=8)
+        if resp.status_code == 200:
+            return True, ""
+        return False, f"Canvas replied with HTTP {resp.status_code}. Check URL/token."
+    except requests.exceptions.RequestException as exc:
+        return False, f"Network error: {exc}"
 
 
 class SkollrWidget(QMainWindow):
@@ -146,7 +174,10 @@ class SkollrWidget(QMainWindow):
         self.tabs.addTab(self.dashboard_stack, "Dashboard")
         self.tabs.addTab(AnalysisPage(), "Analysis")
         self.tabs.addTab(GraphsPage(), "Graphs")
-        self.tabs.addTab(SettingsPage(), "Settings")
+
+        self.settings_page = SettingsPage()
+        self.settings_page.configure_canvas.connect(self.show_canvas_api_dialog)
+        self.tabs.addTab(self.settings_page, "Settings")
 
         foreground = QWidget()
         foreground.setLayout(main_layout)
@@ -204,19 +235,25 @@ class SkollrWidget(QMainWindow):
         )
         if dialog.exec() == 1:  # QDialog.Accepted == 1
             values = dialog.get_values()
-            if values.get("canvas_api_token") and values.get("canvas_base_url"):
-                # Save to .env automatically
-                save_api_key_to_env("CANVAS_API_TOKEN",
-                                    values["canvas_api_token"])
-                save_api_key_to_env("CANVAS_BASE_URL",
-                                    values["canvas_base_url"])
-                # Reload the app
-                self.close()
-                load_dotenv()
-                # Restart the app logic
-                import subprocess
-                subprocess.Popen([sys.executable, __file__])
-                QApplication.quit()
+            api_token = values.get("canvas_api_token", "")
+            base_url = values.get("canvas_base_url", "")
+
+            ok, err = validate_canvas_credentials(base_url, api_token)
+            if not ok:
+                QMessageBox.warning(self, "Canvas Connection Failed", err)
+                return
+
+            # Save to .env automatically
+            save_api_key_to_env("CANVAS_API_TOKEN", api_token)
+            save_api_key_to_env("CANVAS_BASE_URL", base_url)
+
+            # Reload the app
+            self.close()
+            load_dotenv()
+            # Restart the app logic
+            import subprocess
+            subprocess.Popen([sys.executable, __file__])
+            QApplication.quit()
 
     def _create_title_bar(self) -> QWidget:
         """Create custom draggable title bar with minimize/close buttons"""
