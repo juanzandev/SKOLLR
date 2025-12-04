@@ -3,28 +3,36 @@
 SKOLLR - Canvas LMS Widget Application
 """
 
-import sys
+import sys, os
+import concurrent
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QTabWidget, QStackedLayout, QGraphicsOpacityEffect
+    QPushButton, QLabel, QTabWidget, QStackedLayout, QGraphicsOpacityEffect, QStackedWidget
 )
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QFont, QMouseEvent, QIcon, QPixmap
 
 from src.ui.dashboard import DashboardPage
 from src.ui.analysis import AnalysisPage
+from src.ui.course_details import CourseDetailPage
 from src.ui.graphs import GraphsPage
 from src.ui.settings import SettingsPage
+from src.api.canvas_api import CanvasLMSAPI
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class SkollrWidget(QMainWindow):
     """Compact desktop widget for Canvas LMS"""
 
-    def __init__(self):
+    def __init__(self, courses, files, assignments):
         super().__init__()
         self.dragging = False
         self.drag_position = QPoint()
+
+        self.assignments = assignments
+        self.files = files
 
         # Assets (located under src/img)
         base_dir = Path(__file__).parent
@@ -88,7 +96,17 @@ class SkollrWidget(QMainWindow):
         main_layout.addWidget(self.tabs)
 
         # Add 4 sections with separate page classes
-        self.tabs.addTab(DashboardPage(), "Dashboard")
+        self.dashboard_stack = QStackedWidget()
+
+        # Page 1: The Course List
+        self.dashboard_list = DashboardPage(courses)
+        # Connect the signal from DashboardPage to our handler
+        self.dashboard_list.course_selected.connect(self.show_course_detail)
+
+        self.dashboard_stack.addWidget(self.dashboard_list)
+
+        # Add the STACK to the tab, not just the page
+        self.tabs.addTab(self.dashboard_stack, "Dashboard")
         self.tabs.addTab(AnalysisPage(), "Analysis")
         self.tabs.addTab(GraphsPage(), "Graphs")
         self.tabs.addTab(SettingsPage(), "Settings")
@@ -102,6 +120,38 @@ class SkollrWidget(QMainWindow):
 
         # Apply initial sizing for the background logo
         self._update_background_logo_size()
+
+
+    def show_course_detail(self, course_data):
+        """Switches the Dashboard tab to show course details"""
+        course_name = course_data.get("course_name")
+
+        # 1. Filter Assignments for this course
+        # Matches structure from previous canvas_api responses
+        c_assigns = next((a["assignments"] for a in self.assignments if a.get("course_name") == course_name), [])
+
+        # 2. Filter Files for this course
+        c_files = []
+        for f_dict in self.files:
+            if course_name in f_dict:
+                c_files = f_dict[course_name]
+                break
+
+        # 3. Create Detail Page
+        detail_page = CourseDetailPage(course_name, c_assigns, c_files)
+        detail_page.back_clicked.connect(self.go_back_to_dashboard)
+
+        # 4. Add to stack and show
+        self.dashboard_stack.addWidget(detail_page)
+        self.dashboard_stack.setCurrentWidget(detail_page)
+
+    def go_back_to_dashboard(self):
+        """Removes the detail page and shows the list again"""
+        current = self.dashboard_stack.currentWidget()
+        if current != self.dashboard_list:
+            self.dashboard_stack.removeWidget(current)
+            current.deleteLater()
+            self.dashboard_stack.setCurrentWidget(self.dashboard_list)
 
     def _create_title_bar(self) -> QWidget:
         """Create custom draggable title bar with minimize/close buttons"""
@@ -215,7 +265,17 @@ class SkollrWidget(QMainWindow):
 
 
 if __name__ == "__main__":
+    api_token = os.environ.get("CANVAS_API_TOKEN")
+    api_base_url = f'{os.getenv("CANVAS_BASE_URL")}/api/v1'
+    canvas_api = CanvasLMSAPI(api_token=api_token, base_url=api_base_url)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_courses = executor.submit(canvas_api.all_courses_and_grades)
+        future_assignments = executor.submit(canvas_api.all_assignments)
+        future_files = executor.submit(canvas_api.all_files)
+        courses = future_courses.result()
+        assignments = future_assignments.result()
+        files = future_files.result()
     app = QApplication(sys.argv)
-    widget = SkollrWidget()
+    widget = SkollrWidget(courses=courses, files=files, assignments=assignments)
     widget.show()
     sys.exit(app.exec())
