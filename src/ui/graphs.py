@@ -2,20 +2,19 @@
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea
 from PySide6.QtGui import QFont
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    WEBENGINE_AVAILABLE = True
+except ImportError:
+    WEBENGINE_AVAILABLE = False
+    print("[INFO] QWebEngineView not available, using matplotlib fallback")
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+    from matplotlib.figure import Figure
 
-# Matplotlib imports for embedding in PySide6
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-
-
-class MplCanvas(FigureCanvasQTAgg):
-    """Matplotlib canvas widget for embedding charts"""
-    
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
-        super().__init__(fig)
+import plotly.graph_objects as go
+import tempfile
+import os
 
 
 class GraphsPage(QWidget):
@@ -24,7 +23,7 @@ class GraphsPage(QWidget):
     def __init__(self, courses=None):
         super().__init__()
         self.courses = courses or []
-        
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(20, 20, 20, 20)
 
@@ -37,85 +36,139 @@ class GraphsPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        
+
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setSpacing(20)
-        
+
         # Add graphs if we have course data
         if self.courses:
             # Example 1: Bar chart of grades
             layout.addWidget(self._create_grade_bar_chart())
-            
+
             # Example 2: Pie chart of grade distribution
             layout.addWidget(self._create_grade_pie_chart())
         else:
-            no_data = QLabel("No course data available.\nConfigure Canvas API in Settings to see graphs.")
+            no_data = QLabel(
+                "No course data available.\nConfigure Canvas API in Settings to see graphs.")
             no_data.setAlignment(Qt.AlignCenter)
             no_data.setStyleSheet("color: #7f8c8d; padding: 40px;")
             layout.addWidget(no_data)
-        
+
         layout.addStretch()
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
         self.setLayout(main_layout)
 
     def _create_grade_bar_chart(self):
-        """Create a bar chart showing course grades"""
-        canvas = MplCanvas(self, width=5, height=3, dpi=100)
-        
+        """Create an interactive bar chart showing course grades"""
         # Filter courses with grades
-        courses_with_grades = [c for c in self.courses if c.get('current_percentage')]
-        
+        courses_with_grades = [
+            c for c in self.courses if c.get('current_percentage')]
+
+        if not WEBENGINE_AVAILABLE:
+            return self._create_fallback_label("Install PySide6-WebEngine for interactive graphs")
+
+        web_view = QWebEngineView()
+        web_view.setMinimumHeight(400)
+
         if courses_with_grades:
-            # Shorten course names for display
-            names = [c['course_name'][:30] + '...' if len(c['course_name']) > 30 
-                    else c['course_name'] for c in courses_with_grades]
+            # Prepare data
+            names = [c['course_name'] for c in courses_with_grades]
             scores = [c['current_percentage'] for c in courses_with_grades]
-            
-            canvas.axes.barh(names, scores, color='#3498db')
-            canvas.axes.set_xlabel('Grade (%)', fontsize=10)
-            canvas.axes.set_title('Course Grades', fontsize=12, fontweight='bold')
-            canvas.axes.set_xlim(0, 100)
-            
-            # Add percentage labels on bars
-            for i, v in enumerate(scores):
-                canvas.axes.text(v + 1, i, f'{v:.1f}%', va='center', fontsize=8)
-            
-            canvas.axes.tick_params(axis='both', labelsize=8)
-            canvas.figure.tight_layout()
+
+            # Create interactive bar chart
+            fig = go.Figure(data=[
+                go.Bar(
+                    y=names,
+                    x=scores,
+                    orientation='h',
+                    marker=dict(
+                        color=scores,
+                        colorscale='Blues',
+                        line=dict(color='#2c3e50', width=1)
+                    ),
+                    text=[f'{s:.1f}%' for s in scores],
+                    textposition='outside',
+                    hovertemplate='<b>%{y}</b><br>Grade: %{x:.1f}%<extra></extra>'
+                )
+            ])
+
+            fig.update_layout(
+                title=dict(text='Course Grades', font=dict(
+                    size=16, color='#2c3e50')),
+                xaxis=dict(title='Grade (%)', range=[
+                           0, 100], gridcolor='#ecf0f1'),
+                yaxis=dict(title='', automargin=True),
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                margin=dict(l=20, r=20, t=50, b=50),
+                height=max(300, len(courses_with_grades) * 40)
+            )
+
+            html = fig.to_html(include_plotlyjs='cdn')
         else:
-            canvas.axes.text(0.5, 0.5, 'No grade data available', 
-                           ha='center', va='center', fontsize=12)
-            canvas.axes.set_xticks([])
-            canvas.axes.set_yticks([])
-        
-        return canvas
+            html = '<html><body style="display:flex;align-items:center;justify-content:center;height:100%;font-family:Arial;color:#7f8c8d;">No grade data available</body></html>'
+
+        web_view.setHtml(html)
+        return web_view
+
+    def _create_fallback_label(self, message):
+        """Create a fallback label when WebEngine is not available"""
+        label = QLabel(message)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: #7f8c8d; font-size: 14px;")
+        return label
 
     def _create_grade_pie_chart(self):
-        """Create a pie chart showing grade distribution"""
-        canvas = MplCanvas(self, width=5, height=3, dpi=100)
-        
+        """Create an interactive pie chart showing grade distribution"""
         # Count letter grades
         grade_counts = {}
         for course in self.courses:
             grade = course.get('current_grade')
             if grade:
                 grade_counts[grade] = grade_counts.get(grade, 0) + 1
-        
+
+        if not WEBENGINE_AVAILABLE:
+            return self._create_fallback_label("Install PySide6-WebEngine for interactive graphs")
+
+        web_view = QWebEngineView()
+        web_view.setMinimumHeight(400)
+
         if grade_counts:
             labels = list(grade_counts.keys())
             sizes = list(grade_counts.values())
-            colors = ['#2ecc71', '#3498db', '#f39c12', '#e74c3c', '#95a5a6']
-            
-            canvas.axes.pie(sizes, labels=labels, autopct='%1.0f%%', 
-                          colors=colors[:len(labels)], startangle=90)
-            canvas.axes.set_title('Grade Distribution', fontsize=12, fontweight='bold')
-            canvas.figure.tight_layout()
+
+            # Create interactive pie chart
+            fig = go.Figure(data=[
+                go.Pie(
+                    labels=labels,
+                    values=sizes,
+                    marker=dict(
+                        colors=['#2ecc71', '#3498db',
+                            '#f39c12', '#e74c3c', '#95a5a6'],
+                        line=dict(color='white', width=2)
+                    ),
+                    textinfo='label+percent',
+                    hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>',
+                    hole=0.3  # Make it a donut chart
+                )
+            ])
+
+            fig.update_layout(
+                title=dict(text='Grade Distribution',
+                           font=dict(size=16, color='#2c3e50')),
+                paper_bgcolor='white',
+                margin=dict(l=20, r=20, t=50, b=20),
+                height=400,
+                showlegend=True,
+                legend=dict(orientation='h', yanchor='bottom',
+                            y=-0.1, xanchor='center', x=0.5)
+            )
+
+            html = fig.to_html(include_plotlyjs='cdn')
         else:
-            canvas.axes.text(0.5, 0.5, 'No letter grades available', 
-                           ha='center', va='center', fontsize=12)
-            canvas.axes.set_xticks([])
-            canvas.axes.set_yticks([])
-        
-        return canvas
+            html = '<html><body style="display:flex;align-items:center;justify-content:center;height:100%;font-family:Arial;color:#7f8c8d;">No letter grades available</body></html>'
+
+        web_view.setHtml(html)
+        return web_view

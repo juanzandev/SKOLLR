@@ -1,12 +1,15 @@
 # How to Add Graphs to SKOLLR
 
 ## Overview
-The Graphs page uses `matplotlib` with PySide6 integration. Charts are embedded directly in the Qt widget using `FigureCanvasQTAgg`.
+
+The Graphs page uses **Plotly** for interactive visualizations, embedded using `QWebEngineView`. Charts are rendered as HTML with interactive hover tooltips, zoom, and pan capabilities.
 
 ## Current Implementation
+
 Two example graphs are provided:
-1. **Horizontal Bar Chart** - Shows course grades as percentages
-2. **Pie Chart** - Shows distribution of letter grades (A, B, C, etc.)
+
+1. **Horizontal Bar Chart** - Shows course grades as percentages (interactive hover)
+2. **Donut Chart** - Shows distribution of letter grades (A, B, C, etc.)
 
 ## Adding New Graphs
 
@@ -15,19 +18,43 @@ Two example graphs are provided:
 ```python
 def _create_your_chart_name(self):
     """Description of what this chart shows"""
-    canvas = MplCanvas(self, width=5, height=3, dpi=100)
-    
-    # Your data processing here
-    # Example: Extract data from self.courses
-    
-    # Create the chart
-    canvas.axes.plot(x_data, y_data)  # or .bar(), .scatter(), etc.
-    canvas.axes.set_xlabel('X Label')
-    canvas.axes.set_ylabel('Y Label')
-    canvas.axes.set_title('Chart Title', fontsize=12, fontweight='bold')
-    canvas.figure.tight_layout()
-    
-    return canvas
+    # Check if WebEngine is available
+    if not WEBENGINE_AVAILABLE:
+        return self._create_fallback_label("WebEngine not available for interactive charts")
+
+    web_view = QWebEngineView()
+    web_view.setMinimumHeight(400)
+
+    # Process your data from self.courses
+    # Example: course_names = [c['course_name'] for c in self.courses]
+
+    # Create Plotly figure
+    import plotly.graph_objects as go
+    fig = go.Figure()
+
+    # Add trace (bar, scatter, line, etc.)
+    fig.add_trace(go.Bar(
+        x=your_x_data,
+        y=your_y_data,
+        marker=dict(color='#3498db'),
+        hovertemplate='<b>%{x}</b><br>Value: %{y}<extra></extra>'
+    ))
+
+    # Update layout
+    fig.update_layout(
+        title='Your Chart Title',
+        xaxis_title='X Axis Label',
+        yaxis_title='Y Axis Label',
+        height=400,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(family='Arial', size=12, color='#2c3e50')
+    )
+
+    # Render to HTML
+    html = fig.to_html(include_plotlyjs='cdn')
+    web_view.setHtml(html)
+    return web_view
 ```
 
 ### Step 2: Add the chart to the layout in `__init__`
@@ -41,40 +68,62 @@ if self.courses:
 
 ## Common Chart Types
 
-### Line Chart
+### Bar Chart (Horizontal)
+
 ```python
-canvas.axes.plot(x_values, y_values, marker='o', color='#3498db')
-canvas.axes.set_xlabel('Week')
-canvas.axes.set_ylabel('Grade')
+fig.add_trace(go.Bar(
+    y=categories,  # Horizontal bars
+    x=values,
+    orientation='h',
+    marker=dict(color='#2ecc71')
+))
 ```
 
-### Bar Chart (Vertical)
+### Line Chart
+
 ```python
-canvas.axes.bar(categories, values, color='#2ecc71')
+fig.add_trace(go.Scatter(
+    x=x_values,
+    y=y_values,
+    mode='lines+markers',
+    line=dict(color='#3498db', width=2),
+    marker=dict(size=8)
+))
 ```
 
 ### Scatter Plot
+
 ```python
-canvas.axes.scatter(x_data, y_data, alpha=0.6, s=100, color='#e74c3c')
+fig.add_trace(go.Scatter(
+    x=x_data,
+    y=y_data,
+    mode='markers',
+    marker=dict(size=10, color='#e74c3c', opacity=0.6)
+))
 ```
 
-### Stacked Bar Chart
+### Pie/Donut Chart
+
 ```python
-canvas.axes.bar(x, y1, label='Category 1')
-canvas.axes.bar(x, y2, bottom=y1, label='Category 2')
-canvas.axes.legend()
+fig.add_trace(go.Pie(
+    labels=categories,
+    values=counts,
+    hole=0.4,  # 0.4 for donut, 0 for pie
+    marker=dict(colors=['#3498db', '#2ecc71', '#f39c12'])
+))
 ```
 
 ### Multiple Lines
+
 ```python
-canvas.axes.plot(x, y1, label='Course 1', marker='o')
-canvas.axes.plot(x, y2, label='Course 2', marker='s')
-canvas.axes.legend()
+fig.add_trace(go.Scatter(x=x, y=y1, mode='lines', name='Series 1'))
+fig.add_trace(go.Scatter(x=x, y=y2, mode='lines', name='Series 2'))
 ```
 
 ## Available Data in self.courses
 
 Each course is a dictionary with:
+
 ```python
 {
     'course_name': str,           # Full course name
@@ -86,85 +135,123 @@ Each course is a dictionary with:
 ## Styling Tips
 
 ### Colors
+
 Use these professional colors:
+
 - Blue: `#3498db`
 - Green: `#2ecc71`
 - Orange: `#f39c12`
 - Red: `#e74c3c`
 - Gray: `#95a5a6`
+- Purple: `#9b59b6`
+- Teal: `#1abc9c`
 
-### Font Sizes
-- Title: `fontsize=12, fontweight='bold'`
-- Labels: `fontsize=10`
-- Tick labels: `labelsize=8`
+### Layout Options
 
-### Dark Theme Compatible
 ```python
-canvas.axes.set_facecolor('#2c3e50')  # Dark background
-canvas.axes.tick_params(colors='white')
-canvas.axes.spines['bottom'].set_color('white')
+fig.update_layout(
+    paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
+    plot_bgcolor='rgba(0,0,0,0)',   # Transparent plot area
+    font=dict(family='Arial', size=12, color='#2c3e50'),
+    height=400,
+    showlegend=True,
+    hovermode='closest'  # or 'x', 'y', 'x unified'
+)
 ```
+
+### Interactive Features
+
+Plotly charts automatically include:
+
+- **Hover tooltips** - Customize with `hovertemplate`
+- **Zoom** - Box select or scroll to zoom
+- **Pan** - Click and drag
+- **Download** - Save as PNG from toolbar
+- **Toggle traces** - Click legend items to hide/show
 
 ## Example: Assignment Due Dates Timeline
 
 ```python
 def _create_assignment_timeline(self):
     """Show upcoming assignments on a timeline"""
-    canvas = MplCanvas(self, width=6, height=3, dpi=100)
-    
+    if not WEBENGINE_AVAILABLE:
+        return self._create_fallback_label("WebEngine not available")
+
+    web_view = QWebEngineView()
+    web_view.setMinimumHeight(400)
+
     # Collect assignment data
+    from datetime import datetime
     dates = []
     courses = []
-    
+
     for assignment in self.assignments:
         if assignment.get('due_at'):
-            dates.append(assignment['due_at'])
+            dates.append(datetime.fromisoformat(assignment['due_at']))
             courses.append(assignment['course_name'])
-    
-    # Create timeline
-    canvas.axes.scatter(dates, courses, s=100, color='#e74c3c')
-    canvas.axes.set_xlabel('Due Date')
-    canvas.axes.set_title('Upcoming Assignments', fontsize=12, fontweight='bold')
-    canvas.figure.autofmt_xdate()  # Rotate date labels
-    canvas.figure.tight_layout()
-    
-    return canvas
+
+    # Create Plotly figure
+    import plotly.graph_objects as go
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=courses,
+        mode='markers',
+        marker=dict(size=12, color='#e74c3c'),
+        hovertemplate='<b>%{y}</b><br>Due: %{x}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title='Upcoming Assignments',
+        xaxis_title='Due Date',
+        height=400,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(family='Arial', size=12, color='#2c3e50')
+    )
+
+    html = fig.to_html(include_plotlyjs='cdn')
+    web_view.setHtml(html)
+    return web_view
 ```
-
-## Using Plotly Instead
-
-If you prefer interactive Plotly charts:
-
-1. Install: `pip install plotly kaleido`
-2. Generate HTML:
-```python
-import plotly.graph_objects as go
-
-fig = go.Figure(data=[go.Bar(x=names, y=values)])
-html = fig.to_html(include_plotlyjs='cdn')
-```
-3. Display in QWebEngineView
 
 ## Testing Your Graphs
 
 Run the app with course data:
+
 ```bash
 python main.py
 ```
 
-Navigate to the "Graphs" tab to see your charts.
+Navigate to the "Graphs" tab to see your interactive charts. Hover over chart elements to see detailed tooltips!
 
 ## Troubleshooting
 
 **No graphs showing?**
+
 - Check if courses data is being passed: `print(len(self.courses))`
 - Verify Canvas API is configured in Settings
-- Check terminal for matplotlib errors
+- Check debug output: Canvas data loading logs appear in terminal
+
+**"WebEngine not available" message?**
+
+- WebEngine is included with PySide6 6.9.2+
+- Try: `python -c "from PySide6.QtWebEngineWidgets import QWebEngineView"`
+- If import fails, reinstall: `pip install --force-reinstall PySide6==6.9.2`
 
 **Graph too small/large?**
-- Adjust canvas size: `MplCanvas(self, width=6, height=4, dpi=100)`
-- Modify in `_create_your_chart_name()`
+
+- Adjust height in layout: `fig.update_layout(height=500)`
+- Modify minimum height: `web_view.setMinimumHeight(450)`
 
 **Colors not showing?**
-- Ensure color strings are valid hex codes
-- Use `color='#3498db'` format
+
+- Ensure color strings are valid hex codes: `#3498db`
+- Plotly also accepts CSS names: `'dodgerblue'`, `'crimson'`
+
+**Interactive features not working?**
+
+- Check if HTML rendered: View page source in browser
+- Verify `include_plotlyjs='cdn'` loads correctly
+- Test internet connection (CDN requirement)
