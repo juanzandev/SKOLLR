@@ -77,7 +77,8 @@ def validate_canvas_credentials(base_url: str, api_token: str):
     }
     params = {"per_page": 1}
     try:
-        resp = requests.get(test_url, headers=headers, params=params, timeout=8)
+        resp = requests.get(test_url, headers=headers,
+                            params=params, timeout=8)
         if resp.status_code == 200:
             return True, ""
         return False, f"Canvas replied with HTTP {resp.status_code}. Check URL/token."
@@ -176,7 +177,8 @@ class SkollrWidget(QMainWindow):
         self.tabs.addTab(GraphsPage(), "Graphs")
 
         self.settings_page = SettingsPage()
-        self.settings_page.configure_canvas.connect(self.show_canvas_api_dialog)
+        self.settings_page.configure_canvas.connect(
+            self.show_canvas_api_dialog)
         self.tabs.addTab(self.settings_page, "Settings")
 
         foreground = QWidget()
@@ -391,7 +393,10 @@ if __name__ == "__main__":
                 assignments = future_assignments.result()
                 files = future_files.result()
         except Exception as e:
+            import traceback
             print(f"Error loading Canvas data: {e}")
+            print(f"[TRACEBACK]")
+            traceback.print_exc()
             canvas_api = CanvasLMSAPI(
                 api_token=api_token, base_url=api_base_url)
 
