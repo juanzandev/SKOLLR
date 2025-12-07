@@ -174,7 +174,7 @@ class SkollrWidget(QMainWindow):
         # Add the STACK to the tab, not just the page
         self.tabs.addTab(self.dashboard_stack, "Dashboard")
         self.tabs.addTab(AnalysisPage(courses, assignments, files), "Analysis")
-        self.tabs.addTab(GraphsPage(), "Graphs")
+        self.tabs.addTab(GraphsPage(courses), "Graphs")
 
         self.settings_page = SettingsPage()
         self.settings_page.configure_canvas.connect(
